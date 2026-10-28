@@ -57,18 +57,25 @@
 
   function buildLayout(raw) {
     if (Array.isArray(raw?.layout) && raw.layout.length) {
-      return raw.layout.map((row) => {
+      const built = raw.layout.map((row) => {
         const desks = Array.isArray(row) ? row : row?.desks;
-        if (!Array.isArray(desks) || !desks.length) return [];
-        return desks.map((desk) => ({
-          id: desk.id || uid("dk"),
-          capacity: Number(desk.capacity) === 1 ? 1 : 2,
-        }));
+        if (!Array.isArray(desks)) return [];
+        return desks.map((desk) => {
+          if (!desk || desk.empty) return null;
+          return {
+            id: desk.id || uid("dk"),
+            capacity: Number(desk.capacity) === 1 ? 1 : 2,
+          };
+        });
       });
+      padLayout(built);
+      return built;
     }
     const rows = Number(raw?.rows) > 0 ? Number(raw.rows) : 4;
     const desksPerRow = Number(raw?.desksPerRow) > 0 ? Number(raw.desksPerRow) : 3;
-    return defaultLayout(rows, desksPerRow);
+    const layout = defaultLayout(rows, desksPerRow);
+    padLayout(layout);
+    return layout;
   }
 
   function migrateSeats(rawSeats, layout) {
@@ -139,6 +146,7 @@
     if (!Array.isArray(current.layout) || !current.layout.length) {
       current.layout = defaultLayout(4, 3);
     }
+    padLayout(current.layout);
     return current;
   }
 
@@ -180,16 +188,31 @@
     return { deskId: raw.slice(0, split), side: Number(raw.slice(split + 1)) };
   }
 
+  function padLayout(layout) {
+    const cols = Math.max(1, ...layout.map((row) => row.length));
+    layout.forEach((row) => {
+      while (row.length < cols) row.push(null);
+    });
+    return cols;
+  }
+
+  function columnCount(item = klass()) {
+    return Math.max(1, ...(item.layout || []).map((row) => row.length));
+  }
+
   function findDesk(deskId, layout = klass().layout) {
     for (let row = 0; row < layout.length; row += 1) {
-      const deskIndex = layout[row].findIndex((desk) => desk.id === deskId);
+      const deskIndex = layout[row].findIndex((desk) => desk && desk.id === deskId);
       if (deskIndex >= 0) return { row, deskIndex, desk: layout[row][deskIndex] };
     }
     return null;
   }
 
   function deskCount(item = klass()) {
-    return (item.layout || []).reduce((sum, row) => sum + row.length, 0);
+    return (item.layout || []).reduce(
+      (sum, row) => sum + row.filter(Boolean).length,
+      0
+    );
   }
 
   function findSeatOf(studentId) {
@@ -232,7 +255,10 @@
 
   function totalSeats(item = klass()) {
     return (item.layout || []).reduce(
-      (sum, row) => sum + row.reduce((rowSum, desk) => rowSum + (desk.capacity === 1 ? 1 : 2), 0),
+      (sum, row) => sum + row.reduce((rowSum, desk) => {
+        if (!desk) return rowSum;
+        return rowSum + (desk.capacity === 1 ? 1 : 2);
+      }, 0),
       0
     );
   }
@@ -310,6 +336,7 @@
     const seated = [];
     klass().layout.forEach((desks, row) => {
       desks.forEach((desk, deskIndex) => {
+        if (!desk) return;
         const capacity = desk.capacity === 1 ? 1 : 2;
         for (let side = 0; side < capacity; side += 1) {
           const id = klass().seats[seatKey(desk.id, side)];
@@ -465,14 +492,22 @@
     $("view-class").innerHTML = `
       <div class="card grid-card">
         <div class="step-row">
-          <div class="label"><b>Ряды</b><span>сколько рядов в глубину</span></div>
+          <div class="label"><b>Ряды</b><span>глубина класса</span></div>
           <div class="stepper">
             <button type="button" data-action="grid" data-field="rows" data-delta="-1">−</button>
             <div class="val">${klass().layout.length}</div>
             <button type="button" data-action="grid" data-field="rows" data-delta="1">+</button>
           </div>
         </div>
-        <div class="note">«+» в конце ряда добавляет парту. На парте нажмите ··· — можно оставить одно место или убрать парту. Всего мест: ${totalSeats()}.</div>
+        <div class="step-row">
+          <div class="label"><b>Клеток в ряду</b><span>ширина сетки, пустые места сохраняются</span></div>
+          <div class="stepper">
+            <button type="button" data-action="grid" data-field="cols" data-delta="-1">−</button>
+            <div class="val">${columnCount()}</div>
+            <button type="button" data-action="grid" data-field="cols" data-delta="1">+</button>
+          </div>
+        </div>
+        <div class="note">Если убрать парту, клетка останется — так можно собрать класс буквой П. На пустую клетку нажмите, чтобы вернуть парту. Всего мест: ${totalSeats()}.</div>
       </div>
       ${renderClassroom({ mode: "seat" })}
       <div class="section-title"><span>Без парты</span><span>${free.length}</span></div>
@@ -508,12 +543,13 @@
   }
 
   function renderClassroom({ mode, session }) {
-    const layout = mode === "attend" ? sessionLayout(session) : klass().layout;
+    const source = mode === "attend" ? sessionLayout(session) : klass().layout;
+    const layout = source.map((row) => row.slice());
+    const cols = padLayout(layout);
     const rowsHtml = layout.map((desks, row) => `
-      <div class="desk-row">
+      <div class="desk-row" style="--cols:${cols}">
         <div class="row-index">${row + 1}</div>
-        ${desks.map((desk, deskIndex) => renderDesk(desk, row, deskIndex, mode, session)).join("")}
-        ${mode === "seat" ? `<button class="add-desk" type="button" data-action="add-desk" data-row="${row}" aria-label="Добавить парту в ряд">+</button>` : ""}
+        ${desks.map((desk, deskIndex) => renderDeskSlot(desk, row, deskIndex, mode, session)).join("")}
       </div>
     `).join("");
     return `
@@ -524,6 +560,23 @@
         </div>
       </div>
     `;
+  }
+
+  function renderDeskSlot(desk, row, deskIndex, mode, session) {
+    if (!desk) {
+      if (mode === "seat") {
+        return `
+          <div class="desk-slot">
+            <button class="ghost-desk" type="button" data-action="place-desk" data-row="${row}" data-col="${deskIndex}">
+              <span>+</span>
+              <small>парта</small>
+            </button>
+          </div>
+        `;
+      }
+      return `<div class="desk-slot"><div class="ghost-desk is-static"></div></div>`;
+    }
+    return `<div class="desk-slot">${renderDesk(desk, row, deskIndex, mode, session)}</div>`;
   }
 
   function findSessionEntry(session, desk, row, deskIndex, side) {
@@ -747,12 +800,12 @@
     const { row, deskIndex, desk } = found;
     openSheet(`
       <h2>Парта</h2>
-      <p class="lead">Ряд ${row + 1}, парта ${deskIndex + 1}. Можно оставить одно место или убрать парту из ряда.</p>
+      <p class="lead">Ряд ${row + 1}, клетка ${deskIndex + 1}. Если убрать парту, на её месте останется пустая клетка — сетка не съедет.</p>
       <div class="tiny-actions">
         <button class="${desk.capacity === 1 ? "is-active" : ""}" type="button" data-action="set-capacity" data-desk="${desk.id}" data-capacity="1">1 ученик</button>
         <button class="${desk.capacity === 2 ? "is-active" : ""}" type="button" data-action="set-capacity" data-desk="${desk.id}" data-capacity="2">2 ученика</button>
       </div>
-      <button class="danger" type="button" data-action="delete-desk" data-desk="${desk.id}">Убрать парту из ряда</button>
+      <button class="danger" type="button" data-action="delete-desk" data-desk="${desk.id}">Убрать парту, оставить клетку</button>
     `);
   }
 
@@ -937,27 +990,36 @@
     if (action === "grid") {
       const delta = Number(hit.dataset.delta);
       const layout = klass().layout;
-      const next = layout.length + delta;
-      if (next < 1 || next > 10) return;
-      if (delta > 0) {
-        const prev = layout[layout.length - 1] || [];
-        const copy = prev.length
-          ? prev.map((desk) => makeDesk(desk.capacity))
-          : [makeDesk(2), makeDesk(2), makeDesk(2)];
-        layout.push(copy);
+      padLayout(layout);
+      if (hit.dataset.field === "cols") {
+        const cols = columnCount();
+        const next = cols + delta;
+        if (next < 1 || next > 8) return;
+        if (delta > 0) layout.forEach((row) => row.push(makeDesk(2)));
+        else layout.forEach((row) => row.pop());
       } else {
-        layout.pop();
+        const next = layout.length + delta;
+        if (next < 1 || next > 10) return;
+        if (delta > 0) {
+          const cols = columnCount();
+          const prev = layout[layout.length - 1] || [];
+          layout.push(Array.from({ length: cols }, (_, index) => (
+            prev[index] ? makeDesk(prev[index].capacity) : null
+          )));
+        } else {
+          layout.pop();
+        }
       }
       pruneSeats();
       save();
       render();
       return;
     }
-    if (action === "add-desk") {
+    if (action === "place-desk") {
       const row = Number(hit.dataset.row);
-      if (!klass().layout[row]) return;
-      if (klass().layout[row].length >= 8) return toast("В ряду уже максимум парт");
-      klass().layout[row].push(makeDesk(2));
+      const col = Number(hit.dataset.col);
+      if (!klass().layout[row] || klass().layout[row][col]) return;
+      klass().layout[row][col] = makeDesk(2);
       save();
       render();
       return;
@@ -980,8 +1042,7 @@
     if (action === "delete-desk") {
       const found = findDesk(hit.dataset.desk);
       if (!found) return;
-      if (deskCount() <= 1) return toast("Оставьте хотя бы одну парту");
-      klass().layout[found.row].splice(found.deskIndex, 1);
+      klass().layout[found.row][found.deskIndex] = null;
       pruneSeats();
       save();
       closeSheet();
