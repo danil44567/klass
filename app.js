@@ -17,12 +17,21 @@
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
+  function makeDesk(capacity = 2) {
+    return { id: uid("dk"), capacity: Number(capacity) === 1 ? 1 : 2 };
+  }
+
+  function defaultLayout(rowCount, desksPerRow) {
+    return Array.from({ length: rowCount }, () =>
+      Array.from({ length: desksPerRow }, () => makeDesk(2))
+    );
+  }
+
   function emptyClass(name) {
     return {
       id: uid("cl"),
       name: name || "Мой класс",
-      rows: 4,
-      desksPerRow: 3,
+      layout: defaultLayout(4, 3),
       students: [],
       seats: {},
       sessions: [],
@@ -46,6 +55,38 @@
     }[ch]));
   }
 
+  function buildLayout(raw) {
+    if (Array.isArray(raw?.layout) && raw.layout.length) {
+      return raw.layout.map((row) => {
+        const desks = Array.isArray(row) ? row : row?.desks;
+        if (!Array.isArray(desks) || !desks.length) return [];
+        return desks.map((desk) => ({
+          id: desk.id || uid("dk"),
+          capacity: Number(desk.capacity) === 1 ? 1 : 2,
+        }));
+      });
+    }
+    const rows = Number(raw?.rows) > 0 ? Number(raw.rows) : 4;
+    const desksPerRow = Number(raw?.desksPerRow) > 0 ? Number(raw.desksPerRow) : 3;
+    return defaultLayout(rows, desksPerRow);
+  }
+
+  function migrateSeats(rawSeats, layout) {
+    const seats = {};
+    if (!rawSeats || typeof rawSeats !== "object") return seats;
+    for (const [key, studentId] of Object.entries(rawSeats)) {
+      if (!studentId) continue;
+      if (String(key).includes(":")) {
+        seats[key] = studentId;
+        continue;
+      }
+      const [row, desk, side] = String(key).split("-").map(Number);
+      const found = layout[row]?.[desk];
+      if (found && Number.isInteger(side)) seats[`${found.id}:${side}`] = studentId;
+    }
+    return seats;
+  }
+
   function normalizeClass(raw, fallbackName) {
     const sessions = Array.isArray(raw?.sessions)
       ? raw.sessions.map((session) => ({
@@ -53,13 +94,13 @@
           entries: Array.isArray(session.entries) ? session.entries : [],
         }))
       : [];
+    const layout = buildLayout(raw);
     return {
       id: raw?.id || uid("cl"),
       name: raw?.name || raw?.className || fallbackName || "Мой класс",
-      rows: Number(raw?.rows) > 0 ? Number(raw.rows) : 4,
-      desksPerRow: Number(raw?.desksPerRow) > 0 ? Number(raw.desksPerRow) : 3,
+      layout,
       students: Array.isArray(raw?.students) ? raw.students : [],
-      seats: raw?.seats && typeof raw.seats === "object" ? raw.seats : {},
+      seats: migrateSeats(raw?.seats, layout),
       sessions,
     };
   }
@@ -95,6 +136,9 @@
       current = state.classes[0];
       state.currentClassId = current.id;
     }
+    if (!Array.isArray(current.layout) || !current.layout.length) {
+      current.layout = defaultLayout(4, 3);
+    }
     return current;
   }
 
@@ -122,21 +166,47 @@
     return AVATARS[Math.abs(hash) % AVATARS.length];
   }
 
-  function seatKey(row, desk, side) {
-    return `${row}-${desk}-${side}`;
+  function seatKey(deskId, side) {
+    return `${deskId}:${side}`;
   }
 
   function parseSeatKey(key) {
-    const [row, desk, side] = String(key).split("-").map(Number);
-    return { row, desk, side };
+    const raw = String(key);
+    const split = raw.lastIndexOf(":");
+    if (split === -1) {
+      const [row, desk, side] = raw.split("-").map(Number);
+      return { deskId: null, row, desk, side };
+    }
+    return { deskId: raw.slice(0, split), side: Number(raw.slice(split + 1)) };
+  }
+
+  function findDesk(deskId, layout = klass().layout) {
+    for (let row = 0; row < layout.length; row += 1) {
+      const deskIndex = layout[row].findIndex((desk) => desk.id === deskId);
+      if (deskIndex >= 0) return { row, deskIndex, desk: layout[row][deskIndex] };
+    }
+    return null;
+  }
+
+  function deskCount(item = klass()) {
+    return (item.layout || []).reduce((sum, row) => sum + row.length, 0);
   }
 
   function findSeatOf(studentId) {
     return Object.entries(klass().seats).find(([, id]) => id === studentId)?.[0] || null;
   }
 
-  function placeStudent(studentId, row, desk, side) {
-    const dest = seatKey(row, desk, side);
+  function seatLabel(key) {
+    const { deskId, side } = parseSeatKey(key);
+    const found = deskId ? findDesk(deskId) : null;
+    if (!found) return "За партой";
+    const place = `Ряд ${found.row + 1}, парта ${found.deskIndex + 1}`;
+    if (found.desk.capacity === 1) return place;
+    return `${place}, ${side === 0 ? "слева" : "справа"}`;
+  }
+
+  function placeStudent(studentId, deskId, side) {
+    const dest = seatKey(deskId, side);
     const occupant = klass().seats[dest];
     const from = findSeatOf(studentId);
     if (from) delete klass().seats[from];
@@ -145,10 +215,12 @@
   }
 
   function pruneSeats() {
-    for (const key of Object.keys(klass().seats)) {
-      const { row, desk } = parseSeatKey(key);
-      if (row >= klass().rows || desk >= klass().desksPerRow || !studentById(klass().seats[key])) {
-        delete klass().seats[key];
+    const seats = klass().seats;
+    for (const key of Object.keys(seats)) {
+      const { deskId, side } = parseSeatKey(key);
+      const found = deskId ? findDesk(deskId) : null;
+      if (!found || side < 0 || side >= found.desk.capacity || !studentById(seats[key])) {
+        delete seats[key];
       }
     }
   }
@@ -158,8 +230,11 @@
     return klass().students.filter((s) => !taken.has(s.id));
   }
 
-  function totalSeats() {
-    return klass().rows * klass().desksPerRow * 2;
+  function totalSeats(item = klass()) {
+    return (item.layout || []).reduce(
+      (sum, row) => sum + row.reduce((rowSum, desk) => rowSum + (desk.capacity === 1 ? 1 : 2), 0),
+      0
+    );
   }
 
   function assignedCount() {
@@ -233,30 +308,33 @@
 
   function snapshotEntries() {
     const seated = [];
-    for (let row = 0; row < klass().rows; row += 1) {
-      for (let desk = 0; desk < klass().desksPerRow; desk += 1) {
-        for (let side = 0; side < 2; side += 1) {
-          const id = klass().seats[seatKey(row, desk, side)];
+    klass().layout.forEach((desks, row) => {
+      desks.forEach((desk, deskIndex) => {
+        const capacity = desk.capacity === 1 ? 1 : 2;
+        for (let side = 0; side < capacity; side += 1) {
+          const id = klass().seats[seatKey(desk.id, side)];
           if (!id) continue;
           const student = studentById(id);
           if (!student) continue;
           seated.push({
             studentId: student.id,
             name: student.name,
+            deskId: desk.id,
             row,
-            desk,
+            desk: deskIndex,
             side,
             status: "unmarked",
           });
         }
-      }
-    }
+      });
+    });
     const taken = new Set(seated.map((e) => e.studentId));
     const rest = klass().students
       .filter((s) => !taken.has(s.id))
       .map((s) => ({
         studentId: s.id,
         name: s.name,
+        deskId: null,
         row: null,
         desk: null,
         side: null,
@@ -335,7 +413,7 @@
       </div>
       <div class="stats">
         <div class="stat"><b>${klass().students.length}</b><span>учеников</span></div>
-        <div class="stat"><b>${klass().rows}×${klass().desksPerRow}</b><span>ряды × парт</span></div>
+        <div class="stat"><b>${deskCount()}</b><span>парт</span></div>
         <div class="stat"><b>${assignedCount()}/${totalSeats()}</b><span>мест занято</span></div>
       </div>
       <div class="class-chips">
@@ -387,22 +465,14 @@
     $("view-class").innerHTML = `
       <div class="card grid-card">
         <div class="step-row">
-          <div class="label"><b>Ряды</b><span>сколько парт в глубину</span></div>
+          <div class="label"><b>Ряды</b><span>сколько рядов в глубину</span></div>
           <div class="stepper">
             <button type="button" data-action="grid" data-field="rows" data-delta="-1">−</button>
-            <div class="val">${klass().rows}</div>
+            <div class="val">${klass().layout.length}</div>
             <button type="button" data-action="grid" data-field="rows" data-delta="1">+</button>
           </div>
         </div>
-        <div class="step-row">
-          <div class="label"><b>Парт в ряду</b><span>по ширине класса</span></div>
-          <div class="stepper">
-            <button type="button" data-action="grid" data-field="desksPerRow" data-delta="-1">−</button>
-            <div class="val">${klass().desksPerRow}</div>
-            <button type="button" data-action="grid" data-field="desksPerRow" data-delta="1">+</button>
-          </div>
-        </div>
-        <div class="note">За каждой партой 2 места. Всего мест: ${totalSeats()}. Нажмите на место, чтобы посадить ученика.</div>
+        <div class="note">«+» в конце ряда добавляет парту. На парте нажмите ··· — можно оставить одно место или убрать парту. Всего мест: ${totalSeats()}.</div>
       </div>
       ${renderClassroom({ mode: "seat" })}
       <div class="section-title"><span>Без парты</span><span>${free.length}</span></div>
@@ -414,12 +484,7 @@
 
   function personRow(student, hint) {
     const seat = findSeatOf(student.id);
-    const seatHint = seat
-      ? (() => {
-          const { row, desk, side } = parseSeatKey(seat);
-          return `Ряд ${row + 1}, парта ${desk + 1}, ${side === 0 ? "слева" : "справа"}`;
-        })()
-      : hint;
+    const seatHint = seat ? seatLabel(seat) : hint;
     return `
       <button class="person-row" type="button" data-action="edit-student" data-id="${student.id}">
         <div class="avatar" style="background:${avatarColor(student.id)}">${escapeHtml(initials(student.name))}</div>
@@ -432,66 +497,73 @@
     `;
   }
 
+  function sessionLayout(session) {
+    if (Array.isArray(session?.layout) && session.layout.length) return session.layout;
+    const seated = (session?.entries || []).filter((entry) => entry.row != null);
+    const rowCount = session?.rows || (seated.length ? Math.max(...seated.map((entry) => entry.row)) + 1 : klass().layout.length);
+    const deskCountValue = session?.desksPerRow || (seated.length ? Math.max(...seated.map((entry) => entry.desk)) + 1 : 3);
+    return Array.from({ length: rowCount }, (_, row) =>
+      Array.from({ length: deskCountValue }, (_, desk) => ({ id: `legacy-${row}-${desk}`, capacity: 2 }))
+    );
+  }
+
   function renderClassroom({ mode, session }) {
-    const rowsHtml = [];
-    const rowCount = session ? (session.rows || maxRow(session)) : klass().rows;
-    const deskCount = session ? (session.desksPerRow || maxDesk(session)) : klass().desksPerRow;
-    for (let row = 0; row < rowCount; row += 1) {
-      const desks = [];
-      for (let desk = 0; desk < deskCount; desk += 1) {
-        desks.push(renderDesk(row, desk, mode, session));
-      }
-      rowsHtml.push(`
-        <div class="desk-row">
-          <div class="row-index">${row + 1}</div>
-          ${desks.join("")}
-        </div>
-      `);
-    }
+    const layout = mode === "attend" ? sessionLayout(session) : klass().layout;
+    const rowsHtml = layout.map((desks, row) => `
+      <div class="desk-row">
+        <div class="row-index">${row + 1}</div>
+        ${desks.map((desk, deskIndex) => renderDesk(desk, row, deskIndex, mode, session)).join("")}
+        ${mode === "seat" ? `<button class="add-desk" type="button" data-action="add-desk" data-row="${row}" aria-label="Добавить парту в ряд">+</button>` : ""}
+      </div>
+    `).join("");
     return `
       <div class="classroom-wrap">
         <div class="classroom">
           <div class="board">доска</div>
-          ${rowsHtml.join("")}
+          ${rowsHtml}
         </div>
       </div>
     `;
   }
 
-  function maxRow(session) {
-    const seated = session.entries.filter((e) => e.row != null);
-    if (!seated.length) return klass().rows;
-    return Math.max(...seated.map((e) => e.row)) + 1;
+  function findSessionEntry(session, desk, row, deskIndex, side) {
+    return session.entries.find((entry) => {
+      if (entry.deskId && desk.id && !String(desk.id).startsWith("legacy-")) {
+        return entry.deskId === desk.id && entry.side === side;
+      }
+      return entry.row === row && entry.desk === deskIndex && entry.side === side;
+    });
   }
 
-  function maxDesk(session) {
-    const seated = session.entries.filter((e) => e.desk != null);
-    if (!seated.length) return klass().desksPerRow;
-    return Math.max(...seated.map((e) => e.desk)) + 1;
-  }
-
-  function renderDesk(row, desk, mode, session) {
+  function renderDesk(desk, row, deskIndex, mode, session) {
+    const capacity = desk.capacity === 1 ? 1 : 2;
+    const setup = mode === "seat" ? `
+      <button class="desk-setup" type="button" data-action="desk-setup" data-desk="${desk.id}" aria-label="Настроить парту">
+        <svg viewBox="0 0 24 24"><circle cx="6" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="18" cy="12" r="2"/></svg>
+      </button>
+    ` : "";
     return `
-      <div class="desk">
-        ${[0, 1].map((side) => renderSeat(row, desk, side, mode, session)).join("")}
+      <div class="desk${capacity === 1 ? " single" : ""}">
+        ${setup}
+        ${Array.from({ length: capacity }, (_, side) => renderSeat(desk, row, deskIndex, side, mode, session)).join("")}
       </div>
     `;
   }
 
-  function renderSeat(row, desk, side, mode, session) {
+  function renderSeat(desk, row, deskIndex, side, mode, session) {
     if (mode === "attend") {
-      const entry = session.entries.find((e) => e.row === row && e.desk === desk && e.side === side);
+      const entry = findSessionEntry(session, desk, row, deskIndex, side);
       if (!entry) {
         return `<div class="seat empty"><span class="plus">·</span></div>`;
       }
-      const cls = entry.status === "present" ? "present" : entry.status === "absent" ? "absent" : "unmarked filled";
+      const markClass = entry.status === "present" ? "present" : entry.status === "absent" ? "absent" : "unmarked filled";
       const badge = entry.status === "present"
         ? `<span class="badge ok">✓</span>`
         : entry.status === "absent"
           ? `<span class="badge no">✕</span>`
           : "";
       return `
-        <button class="seat filled ${cls}" type="button" data-action="toggle-entry" data-sid="${entry.studentId}">
+        <button class="seat filled ${markClass}" type="button" data-action="toggle-entry" data-sid="${entry.studentId}">
           <span class="ini">${escapeHtml(initials(entry.name))}</span>
           <span class="sn">${escapeHtml(shortName(entry.name))}</span>
           ${badge}
@@ -499,17 +571,17 @@
       `;
     }
 
-    const id = klass().seats[seatKey(row, desk, side)];
+    const id = klass().seats[seatKey(desk.id, side)];
     const student = id ? studentById(id) : null;
     if (!student) {
       return `
-        <button class="seat empty" type="button" data-action="pick-seat" data-row="${row}" data-desk="${desk}" data-side="${side}">
+        <button class="seat empty" type="button" data-action="pick-seat" data-desk="${desk.id}" data-side="${side}">
           <span class="plus">+</span>
         </button>
       `;
     }
     return `
-      <button class="seat filled" type="button" data-action="pick-seat" data-row="${row}" data-desk="${desk}" data-side="${side}" style="background:${avatarColor(student.id)}1a">
+      <button class="seat filled" type="button" data-action="pick-seat" data-desk="${desk.id}" data-side="${side}" style="background:${avatarColor(student.id)}1a">
         <span class="ini">${escapeHtml(initials(student.name))}</span>
         <span class="sn">${escapeHtml(shortName(student.name))}</span>
       </button>
@@ -564,8 +636,7 @@
         id: uid("att"),
         date: todayIso(),
         createdAt: Date.now(),
-        rows: klass().rows,
-        desksPerRow: klass().desksPerRow,
+        layout: JSON.parse(JSON.stringify(klass().layout)),
         entries: snapshotEntries(),
       };
       klass().sessions.unshift(session);
@@ -633,15 +704,20 @@
     `;
   }
 
-  function pickSeatSheet(row, desk, side) {
-    ui.pendingSeat = { row, desk, side };
-    const key = seatKey(row, desk, side);
+  function pickSeatSheet(deskId, side) {
+    const found = findDesk(deskId);
+    if (!found) return;
+    ui.pendingSeat = { deskId, side: Number(side) };
+    const key = seatKey(deskId, side);
     const currentId = klass().seats[key];
     const current = currentId ? studentById(currentId) : null;
     const others = klass().students.filter((s) => s.id !== current?.id);
+    const place = found.desk.capacity === 1
+      ? `Ряд ${found.row + 1}, парта ${found.deskIndex + 1}`
+      : `Ряд ${found.row + 1}, парта ${found.deskIndex + 1}, ${Number(side) === 0 ? "слева" : "справа"}`;
     openSheet(`
       <h2>${current ? "Место занято" : "Кто сидит здесь?"}</h2>
-      <p class="lead">Ряд ${row + 1}, парта ${desk + 1}, ${side === 0 ? "слева" : "справа"}</p>
+      <p class="lead">${place}</p>
       ${current ? `
         <div class="person-row" style="background:#f7f1e7">
           <div class="avatar" style="background:${avatarColor(current.id)}">${escapeHtml(initials(current.name))}</div>
@@ -652,12 +728,7 @@
       <div class="sheet-list">
         ${others.length ? others.map((s) => {
           const seat = findSeatOf(s.id);
-          const hint = seat
-            ? (() => {
-                const p = parseSeatKey(seat);
-                return `Пересадить с ряда ${p.row + 1}, парты ${p.desk + 1}`;
-              })()
-            : "Свободен";
+          const hint = seat ? `Пересадить: ${seatLabel(seat)}` : "Свободен";
           return `
           <button class="person-row" type="button" data-action="assign" data-id="${s.id}">
             <div class="avatar" style="background:${avatarColor(s.id)}">${escapeHtml(initials(s.name))}</div>
@@ -667,6 +738,21 @@
         }).join("") : `<p class="lead">${klass().students.length ? "Других учеников нет." : "Сначала добавьте учеников."}</p>`}
       </div>
       <button class="primary" type="button" data-action="add-student">+ Новый ученик</button>
+    `);
+  }
+
+  function deskSetupSheet(deskId) {
+    const found = findDesk(deskId);
+    if (!found) return;
+    const { row, deskIndex, desk } = found;
+    openSheet(`
+      <h2>Парта</h2>
+      <p class="lead">Ряд ${row + 1}, парта ${deskIndex + 1}. Можно оставить одно место или убрать парту из ряда.</p>
+      <div class="tiny-actions">
+        <button class="${desk.capacity === 1 ? "is-active" : ""}" type="button" data-action="set-capacity" data-desk="${desk.id}" data-capacity="1">1 ученик</button>
+        <button class="${desk.capacity === 2 ? "is-active" : ""}" type="button" data-action="set-capacity" data-desk="${desk.id}" data-capacity="2">2 ученика</button>
+      </div>
+      <button class="danger" type="button" data-action="delete-desk" data-desk="${desk.id}">Убрать парту из ряда</button>
     `);
   }
 
@@ -696,7 +782,7 @@
               <div class="avatar" style="background:${avatarColor(item.id)}">${escapeHtml(initials(item.name))}</div>
               <div class="meta">
                 <div class="name">${escapeHtml(item.name)}</div>
-                <div class="hint">${item.students.length} уч. · ${item.rows}×${item.desksPerRow} парт${item.id === klass().id ? " · сейчас" : ""}</div>
+                <div class="hint">${item.students.length} уч. · ${deskCount(item)} парт · ${(item.layout || []).length} ряд.${item.id === klass().id ? " · сейчас" : ""}</div>
               </div>
             </button>
             <button class="icon-btn" type="button" data-action="edit-class" data-id="${item.id}" aria-label="Изменить класс">
@@ -849,25 +935,68 @@
       return;
     }
     if (action === "grid") {
-      const field = hit.dataset.field;
       const delta = Number(hit.dataset.delta);
-      const limits = { rows: [1, 10], desksPerRow: [1, 8] };
-      const next = klass()[field] + delta;
-      if (next < limits[field][0] || next > limits[field][1]) return;
-      klass()[field] = next;
+      const layout = klass().layout;
+      const next = layout.length + delta;
+      if (next < 1 || next > 10) return;
+      if (delta > 0) {
+        const prev = layout[layout.length - 1] || [];
+        const copy = prev.length
+          ? prev.map((desk) => makeDesk(desk.capacity))
+          : [makeDesk(2), makeDesk(2), makeDesk(2)];
+        layout.push(copy);
+      } else {
+        layout.pop();
+      }
       pruneSeats();
       save();
       render();
       return;
     }
+    if (action === "add-desk") {
+      const row = Number(hit.dataset.row);
+      if (!klass().layout[row]) return;
+      if (klass().layout[row].length >= 8) return toast("В ряду уже максимум парт");
+      klass().layout[row].push(makeDesk(2));
+      save();
+      render();
+      return;
+    }
+    if (action === "desk-setup") {
+      deskSetupSheet(hit.dataset.desk);
+      return;
+    }
+    if (action === "set-capacity") {
+      const found = findDesk(hit.dataset.desk);
+      if (!found) return;
+      found.desk.capacity = Number(hit.dataset.capacity) === 1 ? 1 : 2;
+      pruneSeats();
+      save();
+      closeSheet();
+      render();
+      toast(found.desk.capacity === 1 ? "За партой один ученик" : "За партой двое");
+      return;
+    }
+    if (action === "delete-desk") {
+      const found = findDesk(hit.dataset.desk);
+      if (!found) return;
+      if (deskCount() <= 1) return toast("Оставьте хотя бы одну парту");
+      klass().layout[found.row].splice(found.deskIndex, 1);
+      pruneSeats();
+      save();
+      closeSheet();
+      render();
+      toast("Парта убрана");
+      return;
+    }
     if (action === "pick-seat") {
-      pickSeatSheet(Number(hit.dataset.row), Number(hit.dataset.desk), Number(hit.dataset.side));
+      pickSeatSheet(hit.dataset.desk, Number(hit.dataset.side));
       return;
     }
     if (action === "assign") {
       if (!ui.pendingSeat) return;
-      const { row, desk, side } = ui.pendingSeat;
-      placeStudent(hit.dataset.id, row, desk, side);
+      const { deskId, side } = ui.pendingSeat;
+      placeStudent(hit.dataset.id, deskId, side);
       save();
       closeSheet();
       render();
@@ -875,8 +1004,8 @@
     }
     if (action === "unassign") {
       if (!ui.pendingSeat) return;
-      const { row, desk, side } = ui.pendingSeat;
-      delete klass().seats[seatKey(row, desk, side)];
+      const { deskId, side } = ui.pendingSeat;
+      delete klass().seats[seatKey(deskId, side)];
       save();
       closeSheet();
       render();
@@ -901,8 +1030,8 @@
         const student = { id: uid("st"), name };
         klass().students.push(student);
         if (ui.pendingSeat) {
-          const { row, desk, side } = ui.pendingSeat;
-          placeStudent(student.id, row, desk, side);
+          const { deskId, side } = ui.pendingSeat;
+          placeStudent(student.id, deskId, side);
         }
       }
       save();
