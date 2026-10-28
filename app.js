@@ -1,5 +1,6 @@
 (() => {
-  const STORAGE_KEY = "klass-attendance-v1";
+  const STORAGE_KEY = "klass-attendance-v2";
+  const LEGACY_KEY = "klass-attendance-v1";
   const AVATARS = ["#1b6b52", "#d4622b", "#3d6fa5", "#8b5e83", "#b0892e", "#4d7c59", "#c45c4a", "#2f6f7e"];
 
   const $ = (id) => document.getElementById(id);
@@ -9,22 +10,31 @@
     query: "",
     attendanceId: null,
     pendingSeat: null,
+    editingClassId: null,
   };
-
-  const defaultState = () => ({
-    className: "Мой класс",
-    rows: 4,
-    desksPerRow: 3,
-    students: [],
-    seats: {},
-    sessions: [],
-  });
-
-  let state = defaultState();
 
   function uid(prefix) {
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
+
+  function emptyClass(name) {
+    return {
+      id: uid("cl"),
+      name: name || "Мой класс",
+      rows: 4,
+      desksPerRow: 3,
+      students: [],
+      seats: {},
+      sessions: [],
+    };
+  }
+
+  function defaultState() {
+    const first = emptyClass("Мой класс");
+    return { currentClassId: first.id, classes: [first] };
+  }
+
+  let state = defaultState();
 
   function escapeHtml(value) {
     return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
@@ -36,20 +46,39 @@
     }[ch]));
   }
 
+  function normalizeClass(raw, fallbackName) {
+    const sessions = Array.isArray(raw?.sessions)
+      ? raw.sessions.map((session) => ({
+          ...session,
+          entries: Array.isArray(session.entries) ? session.entries : [],
+        }))
+      : [];
+    return {
+      id: raw?.id || uid("cl"),
+      name: raw?.name || raw?.className || fallbackName || "Мой класс",
+      rows: Number(raw?.rows) > 0 ? Number(raw.rows) : 4,
+      desksPerRow: Number(raw?.desksPerRow) > 0 ? Number(raw.desksPerRow) : 3,
+      students: Array.isArray(raw?.students) ? raw.students : [],
+      seats: raw?.seats && typeof raw.seats === "object" ? raw.seats : {},
+      sessions,
+    };
+  }
+
   function load() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      state = { ...defaultState(), ...parsed };
-      state.students = Array.isArray(state.students) ? state.students : [];
-      state.sessions = Array.isArray(state.sessions)
-        ? state.sessions.map((session) => ({
-            ...session,
-            entries: Array.isArray(session.entries) ? session.entries : [],
-          }))
-        : [];
-      state.seats = parsed.seats && typeof parsed.seats === "object" ? parsed.seats : {};
+      if (parsed && Array.isArray(parsed.classes) && parsed.classes.length) {
+        const classes = parsed.classes.map((item) => normalizeClass(item));
+        const currentClassId = classes.some((item) => item.id === parsed.currentClassId)
+          ? parsed.currentClassId
+          : classes[0].id;
+        state = { classes, currentClassId };
+        return;
+      }
+      const migrated = normalizeClass(parsed, parsed.className);
+      state = { currentClassId: migrated.id, classes: [migrated] };
     } catch {
       state = defaultState();
     }
@@ -59,8 +88,22 @@
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
 
+  function klass() {
+    if (!Array.isArray(state.classes) || !state.classes.length) state = defaultState();
+    let current = state.classes.find((item) => item.id === state.currentClassId);
+    if (!current) {
+      current = state.classes[0];
+      state.currentClassId = current.id;
+    }
+    return current;
+  }
+
+  function classById(id) {
+    return state.classes.find((item) => item.id === id);
+  }
+
   function studentById(id) {
-    return state.students.find((s) => s.id === id);
+    return klass().students.find((s) => s.id === id);
   }
 
   function initials(name) {
@@ -89,38 +132,38 @@
   }
 
   function findSeatOf(studentId) {
-    return Object.entries(state.seats).find(([, id]) => id === studentId)?.[0] || null;
+    return Object.entries(klass().seats).find(([, id]) => id === studentId)?.[0] || null;
   }
 
   function placeStudent(studentId, row, desk, side) {
     const dest = seatKey(row, desk, side);
-    const occupant = state.seats[dest];
+    const occupant = klass().seats[dest];
     const from = findSeatOf(studentId);
-    if (from) delete state.seats[from];
-    if (occupant && occupant !== studentId && from) state.seats[from] = occupant;
-    state.seats[dest] = studentId;
+    if (from) delete klass().seats[from];
+    if (occupant && occupant !== studentId && from) klass().seats[from] = occupant;
+    klass().seats[dest] = studentId;
   }
 
   function pruneSeats() {
-    for (const key of Object.keys(state.seats)) {
+    for (const key of Object.keys(klass().seats)) {
       const { row, desk } = parseSeatKey(key);
-      if (row >= state.rows || desk >= state.desksPerRow || !studentById(state.seats[key])) {
-        delete state.seats[key];
+      if (row >= klass().rows || desk >= klass().desksPerRow || !studentById(klass().seats[key])) {
+        delete klass().seats[key];
       }
     }
   }
 
   function unassignedStudents() {
-    const taken = new Set(Object.values(state.seats));
-    return state.students.filter((s) => !taken.has(s.id));
+    const taken = new Set(Object.values(klass().seats));
+    return klass().students.filter((s) => !taken.has(s.id));
   }
 
   function totalSeats() {
-    return state.rows * state.desksPerRow * 2;
+    return klass().rows * klass().desksPerRow * 2;
   }
 
   function assignedCount() {
-    return Object.keys(state.seats).length;
+    return Object.keys(klass().seats).length;
   }
 
   function greeting() {
@@ -185,15 +228,15 @@
   }
 
   function sessionById(id) {
-    return state.sessions.find((s) => s.id === id);
+    return klass().sessions.find((s) => s.id === id);
   }
 
   function snapshotEntries() {
     const seated = [];
-    for (let row = 0; row < state.rows; row += 1) {
-      for (let desk = 0; desk < state.desksPerRow; desk += 1) {
+    for (let row = 0; row < klass().rows; row += 1) {
+      for (let desk = 0; desk < klass().desksPerRow; desk += 1) {
         for (let side = 0; side < 2; side += 1) {
-          const id = state.seats[seatKey(row, desk, side)];
+          const id = klass().seats[seatKey(row, desk, side)];
           if (!id) continue;
           const student = studentById(id);
           if (!student) continue;
@@ -209,7 +252,7 @@
       }
     }
     const taken = new Set(seated.map((e) => e.studentId));
-    const rest = state.students
+    const rest = klass().students
       .filter((s) => !taken.has(s.id))
       .map((s) => ({
         studentId: s.id,
@@ -251,10 +294,10 @@
 
   function renderTopbar() {
     const titles = {
-      home: { title: "Класс", sub: "Журнал посещаемости" },
-      class: { title: "Класс", sub: "Сетка и рассадка" },
-      students: { title: "Ученики", sub: `${state.students.length} в списке` },
-      journal: { title: "Журнал", sub: "Все отметки" },
+      home: { title: "Классы", sub: klass().name },
+      class: { title: "Рассадка", sub: klass().name },
+      students: { title: "Ученики", sub: `${klass().name} · ${klass().students.length}` },
+      journal: { title: "Журнал", sub: klass().name },
     };
     const t = titles[ui.view];
     $("topbar").innerHTML = `
@@ -262,19 +305,22 @@
         <h1>${escapeHtml(t.title)}</h1>
         <div class="sub">${escapeHtml(t.sub)}</div>
       </div>
+      <button class="icon-btn" type="button" data-action="open-classes" aria-label="Список классов">
+        <svg viewBox="0 0 24 24"><path d="M4 5h16v4H4V5Zm0 6h16v4H4v-4Zm0 6h16v4H4v-4Z"/></svg>
+      </button>
     `;
   }
 
   function renderHome() {
-    const last = [...state.sessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
-    const todaySession = state.sessions.find((s) => s.date === todayIso());
+    const last = [...klass().sessions].sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
+    const todaySession = klass().sessions.find((s) => s.date === todayIso());
     $("view-home").innerHTML = `
       <div class="hero">
         <div class="greet">${escapeHtml(greeting())}</div>
         <div class="classname">
-          <button type="button" data-action="rename-class">${escapeHtml(state.className)}</button>
-          <span class="edit-dot" data-action="rename-class" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path d="M4 17.3V20h2.7l8-8-2.7-2.7-8 8ZM18.7 7.3a.8.8 0 0 0 0-1.1l-1.9-1.9a.8.8 0 0 0-1.1 0l-1.5 1.5 3 3 1.5-1.5Z"/></svg>
+          <button type="button" data-action="open-classes">${escapeHtml(klass().name)}</button>
+          <span class="edit-dot" data-action="open-classes" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
           </span>
         </div>
         <button class="hero-cta" type="button" data-action="take-attendance">
@@ -288,9 +334,15 @@
         </button>
       </div>
       <div class="stats">
-        <div class="stat"><b>${state.students.length}</b><span>учеников</span></div>
-        <div class="stat"><b>${state.rows}×${state.desksPerRow}</b><span>ряды × парт</span></div>
+        <div class="stat"><b>${klass().students.length}</b><span>учеников</span></div>
+        <div class="stat"><b>${klass().rows}×${klass().desksPerRow}</b><span>ряды × парт</span></div>
         <div class="stat"><b>${assignedCount()}/${totalSeats()}</b><span>мест занято</span></div>
+      </div>
+      <div class="class-chips">
+        ${state.classes.map((item) => `
+          <button class="class-chip${item.id === klass().id ? " is-active" : ""}" type="button" data-action="switch-class" data-id="${item.id}">${escapeHtml(item.name)}</button>
+        `).join("")}
+        <button class="class-chip add" type="button" data-action="add-class">+ Класс</button>
       </div>
       <div class="section-title">
         <span>Последние отметки</span>
@@ -338,7 +390,7 @@
           <div class="label"><b>Ряды</b><span>сколько парт в глубину</span></div>
           <div class="stepper">
             <button type="button" data-action="grid" data-field="rows" data-delta="-1">−</button>
-            <div class="val">${state.rows}</div>
+            <div class="val">${klass().rows}</div>
             <button type="button" data-action="grid" data-field="rows" data-delta="1">+</button>
           </div>
         </div>
@@ -346,7 +398,7 @@
           <div class="label"><b>Парт в ряду</b><span>по ширине класса</span></div>
           <div class="stepper">
             <button type="button" data-action="grid" data-field="desksPerRow" data-delta="-1">−</button>
-            <div class="val">${state.desksPerRow}</div>
+            <div class="val">${klass().desksPerRow}</div>
             <button type="button" data-action="grid" data-field="desksPerRow" data-delta="1">+</button>
           </div>
         </div>
@@ -355,7 +407,7 @@
       ${renderClassroom({ mode: "seat" })}
       <div class="section-title"><span>Без парты</span><span>${free.length}</span></div>
       <div class="card">
-        ${free.length ? free.map((s) => personRow(s, "Не рассажен")).join("") : `<div class="empty"><p>${state.students.length ? "Все ученики сидят за партами." : "Сначала добавьте учеников."}</p></div>`}
+        ${free.length ? free.map((s) => personRow(s, "Не рассажен")).join("") : `<div class="empty"><p>${klass().students.length ? "Все ученики сидят за партами." : "Сначала добавьте учеников."}</p></div>`}
       </div>
     `;
   }
@@ -382,8 +434,8 @@
 
   function renderClassroom({ mode, session }) {
     const rowsHtml = [];
-    const rowCount = session ? (session.rows || maxRow(session)) : state.rows;
-    const deskCount = session ? (session.desksPerRow || maxDesk(session)) : state.desksPerRow;
+    const rowCount = session ? (session.rows || maxRow(session)) : klass().rows;
+    const deskCount = session ? (session.desksPerRow || maxDesk(session)) : klass().desksPerRow;
     for (let row = 0; row < rowCount; row += 1) {
       const desks = [];
       for (let desk = 0; desk < deskCount; desk += 1) {
@@ -408,13 +460,13 @@
 
   function maxRow(session) {
     const seated = session.entries.filter((e) => e.row != null);
-    if (!seated.length) return state.rows;
+    if (!seated.length) return klass().rows;
     return Math.max(...seated.map((e) => e.row)) + 1;
   }
 
   function maxDesk(session) {
     const seated = session.entries.filter((e) => e.desk != null);
-    if (!seated.length) return state.desksPerRow;
+    if (!seated.length) return klass().desksPerRow;
     return Math.max(...seated.map((e) => e.desk)) + 1;
   }
 
@@ -447,7 +499,7 @@
       `;
     }
 
-    const id = state.seats[seatKey(row, desk, side)];
+    const id = klass().seats[seatKey(row, desk, side)];
     const student = id ? studentById(id) : null;
     if (!student) {
       return `
@@ -466,13 +518,13 @@
 
   function renderStudents() {
     const q = ui.query.trim().toLowerCase();
-    const list = state.students
+    const list = klass().students
       .filter((s) => s.name.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name, "ru"));
     $("view-students").innerHTML = `
       <input class="search" type="search" placeholder="Найти ученика" value="${escapeHtml(ui.query)}" data-action="search">
       <div class="card">
-        ${list.length ? list.map((s) => personRow(s, "Не за партой")).join("") : emptyBlock(state.students.length ? "Никого не нашли" : "Пока никого нет", "Добавьте учеников — потом рассадите их в разделе «Класс».")}
+        ${list.length ? list.map((s) => personRow(s, "Не за партой")).join("") : emptyBlock(klass().students.length ? "Никого не нашли" : "Пока никого нет", "Добавьте учеников — потом рассадите их в разделе «Класс».")}
       </div>
       <button class="fab" type="button" data-action="add-student" aria-label="Добавить ученика">
         <svg viewBox="0 0 24 24"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
@@ -481,7 +533,7 @@
   }
 
   function renderJournal() {
-    const sessions = [...state.sessions].sort((a, b) => {
+    const sessions = [...klass().sessions].sort((a, b) => {
       if (a.date === b.date) return b.createdAt - a.createdAt;
       return a.date < b.date ? 1 : -1;
     });
@@ -503,7 +555,7 @@
   function openAttendance(sessionId) {
     let session = sessionById(sessionId);
     if (!session) {
-      if (!state.students.length) {
+      if (!klass().students.length) {
         toast("Сначала добавьте учеников");
         navigate("students");
         return;
@@ -512,11 +564,11 @@
         id: uid("att"),
         date: todayIso(),
         createdAt: Date.now(),
-        rows: state.rows,
-        desksPerRow: state.desksPerRow,
+        rows: klass().rows,
+        desksPerRow: klass().desksPerRow,
         entries: snapshotEntries(),
       };
-      state.sessions.unshift(session);
+      klass().sessions.unshift(session);
       save();
     }
     ui.attendanceId = session.id;
@@ -584,9 +636,9 @@
   function pickSeatSheet(row, desk, side) {
     ui.pendingSeat = { row, desk, side };
     const key = seatKey(row, desk, side);
-    const currentId = state.seats[key];
+    const currentId = klass().seats[key];
     const current = currentId ? studentById(currentId) : null;
-    const others = state.students.filter((s) => s.id !== current?.id);
+    const others = klass().students.filter((s) => s.id !== current?.id);
     openSheet(`
       <h2>${current ? "Место занято" : "Кто сидит здесь?"}</h2>
       <p class="lead">Ряд ${row + 1}, парта ${desk + 1}, ${side === 0 ? "слева" : "справа"}</p>
@@ -612,7 +664,7 @@
             <div class="meta"><div class="name">${escapeHtml(s.name)}</div><div class="hint">${escapeHtml(hint)}</div></div>
           </button>
         `;
-        }).join("") : `<p class="lead">${state.students.length ? "Других учеников нет." : "Сначала добавьте учеников."}</p>`}
+        }).join("") : `<p class="lead">${klass().students.length ? "Других учеников нет." : "Сначала добавьте учеников."}</p>`}
       </div>
       <button class="primary" type="button" data-action="add-student">+ Новый ученик</button>
     `);
@@ -632,15 +684,70 @@
     `);
   }
 
-  function renameClassSheet() {
+  function openClassesSheet() {
+    ui.editingClassId = null;
     openSheet(`
-      <h2>Название класса</h2>
-      <div class="field">
-        <label for="class-name">Как называется класс</label>
-        <input id="class-name" type="text" maxlength="40" value="${escapeHtml(state.className)}" autocomplete="off" enterkeyhint="done">
+      <h2>Классы</h2>
+      <p class="lead">У каждого класса свои парты, ученики и журнал.</p>
+      <div class="sheet-list">
+        ${state.classes.map((item) => `
+          <div class="class-row${item.id === klass().id ? " is-current" : ""}">
+            <button class="person-row" type="button" data-action="switch-class" data-id="${item.id}">
+              <div class="avatar" style="background:${avatarColor(item.id)}">${escapeHtml(initials(item.name))}</div>
+              <div class="meta">
+                <div class="name">${escapeHtml(item.name)}</div>
+                <div class="hint">${item.students.length} уч. · ${item.rows}×${item.desksPerRow} парт${item.id === klass().id ? " · сейчас" : ""}</div>
+              </div>
+            </button>
+            <button class="icon-btn" type="button" data-action="edit-class" data-id="${item.id}" aria-label="Изменить класс">
+              <svg viewBox="0 0 24 24"><path d="M4 17.3V20h2.7l8-8-2.7-2.7-8 8ZM18.7 7.3a.8.8 0 0 0 0-1.1l-1.9-1.9a.8.8 0 0 0-1.1 0l-1.5 1.5 3 3 1.5-1.5Z"/></svg>
+            </button>
+          </div>
+        `).join("")}
       </div>
-      <button class="primary" type="button" data-action="save-class-name">Сохранить</button>
+      <button class="primary" type="button" data-action="add-class">+ Новый класс</button>
     `);
+  }
+
+  function addClassSheet() {
+    ui.editingClassId = null;
+    const nextName = `Класс ${state.classes.length + 1}`;
+    openSheet(`
+      <h2>Новый класс</h2>
+      <p class="lead">Появятся пустые парты и свой список учеников.</p>
+      <div class="field">
+        <label for="class-name">Название</label>
+        <input id="class-name" type="text" maxlength="40" value="${escapeHtml(nextName)}" autocomplete="off" enterkeyhint="done">
+      </div>
+      <button class="primary" type="button" data-action="save-new-class">Создать</button>
+    `);
+  }
+
+  function editClassSheet(id) {
+    const item = classById(id);
+    if (!item) return;
+    ui.editingClassId = item.id;
+    openSheet(`
+      <h2>Класс</h2>
+      <p class="lead">Переименуйте или удалите. Парты, ученики и журнал этого класса не смешаются с другими.</p>
+      <div class="field">
+        <label for="class-name">Название</label>
+        <input id="class-name" type="text" maxlength="40" value="${escapeHtml(item.name)}" autocomplete="off" enterkeyhint="done">
+      </div>
+      <button class="primary" type="button" data-action="save-class-name" data-id="${item.id}">Сохранить</button>
+      ${state.classes.length > 1 ? `<button class="danger" type="button" data-action="delete-class" data-id="${item.id}" style="margin-top:8px">Удалить класс</button>` : `<p class="lead">Это единственный класс, его нельзя удалить.</p>`}
+    `);
+  }
+
+  function switchClass(id) {
+    const item = classById(id);
+    if (!item) return;
+    if (ui.attendanceId) closeOverlay();
+    state.currentClassId = item.id;
+    ui.query = "";
+    save();
+    closeSheet();
+    render();
   }
 
   function confirmSheet({ title, text, action, id, label }) {
@@ -678,26 +785,76 @@
       closeSheet();
       return;
     }
-    if (action === "rename-class") {
-      renameClassSheet();
+    if (action === "open-classes") {
+      openClassesSheet();
+      return;
+    }
+    if (action === "add-class") {
+      addClassSheet();
+      return;
+    }
+    if (action === "save-new-class") {
+      const value = $("sheet-content").querySelector("#class-name").value.trim();
+      if (!value) return toast("Введите название");
+      if (ui.attendanceId) closeOverlay();
+      const created = emptyClass(value);
+      state.classes.push(created);
+      state.currentClassId = created.id;
+      ui.query = "";
+      save();
+      closeSheet();
+      render();
+      toast("Класс создан");
+      return;
+    }
+    if (action === "switch-class") {
+      switchClass(hit.dataset.id);
+      return;
+    }
+    if (action === "edit-class") {
+      event.stopPropagation();
+      editClassSheet(hit.dataset.id);
       return;
     }
     if (action === "save-class-name") {
       const value = $("sheet-content").querySelector("#class-name").value.trim();
       if (!value) return toast("Введите название");
-      state.className = value;
+      const item = classById(hit.dataset.id || ui.editingClassId) || klass();
+      item.name = value;
       save();
       closeSheet();
       render();
+      return;
+    }
+    if (action === "delete-class") {
+      if (state.classes.length < 2) return toast("Нужен хотя бы один класс");
+      if (hit.dataset.confirm !== "1") {
+        confirmSheet({
+          title: "Удалить класс?",
+          text: "Пропадут его ученики, рассадка и журнал. Другие классы не изменятся.",
+          action: "delete-class",
+          id: hit.dataset.id,
+          label: "Удалить класс",
+        });
+        return;
+      }
+      if (ui.attendanceId) closeOverlay();
+      state.classes = state.classes.filter((item) => item.id !== hit.dataset.id);
+      if (state.currentClassId === hit.dataset.id) state.currentClassId = state.classes[0].id;
+      ui.editingClassId = null;
+      save();
+      closeSheet();
+      render();
+      toast("Класс удалён");
       return;
     }
     if (action === "grid") {
       const field = hit.dataset.field;
       const delta = Number(hit.dataset.delta);
       const limits = { rows: [1, 10], desksPerRow: [1, 8] };
-      const next = state[field] + delta;
+      const next = klass()[field] + delta;
       if (next < limits[field][0] || next > limits[field][1]) return;
-      state[field] = next;
+      klass()[field] = next;
       pruneSeats();
       save();
       render();
@@ -719,7 +876,7 @@
     if (action === "unassign") {
       if (!ui.pendingSeat) return;
       const { row, desk, side } = ui.pendingSeat;
-      delete state.seats[seatKey(row, desk, side)];
+      delete klass().seats[seatKey(row, desk, side)];
       save();
       closeSheet();
       render();
@@ -742,7 +899,7 @@
         if (student) student.name = name;
       } else {
         const student = { id: uid("st"), name };
-        state.students.push(student);
+        klass().students.push(student);
         if (ui.pendingSeat) {
           const { row, desk, side } = ui.pendingSeat;
           placeStudent(student.id, row, desk, side);
@@ -765,9 +922,9 @@
         });
         return;
       }
-      state.students = state.students.filter((s) => s.id !== hit.dataset.id);
-      for (const [key, id] of Object.entries(state.seats)) {
-        if (id === hit.dataset.id) delete state.seats[key];
+      klass().students = klass().students.filter((s) => s.id !== hit.dataset.id);
+      for (const [key, id] of Object.entries(klass().seats)) {
+        if (id === hit.dataset.id) delete klass().seats[key];
       }
       save();
       closeSheet();
@@ -824,7 +981,7 @@
         });
         return;
       }
-      state.sessions = state.sessions.filter((s) => s.id !== ui.attendanceId);
+      klass().sessions = klass().sessions.filter((s) => s.id !== ui.attendanceId);
       save();
       closeSheet();
       closeOverlay();
@@ -841,12 +998,12 @@
       const card = $("view-students").querySelector(".card");
       if (!card) return;
       const q = ui.query.trim().toLowerCase();
-      const list = state.students
+      const list = klass().students
         .filter((s) => s.name.toLowerCase().includes(q))
         .sort((a, b) => a.name.localeCompare(b.name, "ru"));
       card.innerHTML = list.length
         ? list.map((s) => personRow(s, "Не за партой")).join("")
-        : emptyBlock(state.students.length ? "Никого не нашли" : "Пока никого нет", "Добавьте учеников — потом рассадите их в разделе «Класс».");
+        : emptyBlock(klass().students.length ? "Никого не нашли" : "Пока никого нет", "Добавьте учеников — потом рассадите их в разделе «Класс».");
     }
     if (hit.dataset.action === "session-date") {
       const session = sessionById(ui.attendanceId);
@@ -869,7 +1026,7 @@
         }
       }
       if (event.key === "Enter" && !$("backdrop").hidden) {
-        const saveBtn = $("sheet-content").querySelector("[data-action='save-student'], [data-action='save-class-name']");
+        const saveBtn = $("sheet-content").querySelector("[data-action='save-student'], [data-action='save-class-name'], [data-action='save-new-class']");
         if (saveBtn) {
           event.preventDefault();
           saveBtn.click();

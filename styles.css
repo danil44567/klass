@@ -211,7 +211,7 @@ main {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .stat {
@@ -233,6 +233,57 @@ main {
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+}
+
+.class-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 0 16px;
+  padding: 2px 2px 8px;
+}
+
+.class-chip {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.class-chip.is-active {
+  background: var(--green);
+  color: #f4fff9;
+}
+
+.class-chip.add {
+  background: var(--green-soft);
+  color: var(--green-dark);
+}
+
+.class-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 16px;
+}
+
+.class-row .person-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.class-row + .class-row {
+  border-top: 1px solid var(--line);
+}
+
+.class-row.is-current {
+  background: var(--green-soft);
 }
 
 .section-title {
@@ -273,7 +324,7 @@ main {
 .person-row:active { background: #f4efe6; }
 
 .session-row + .session-row,
-.person-row + .person-row {
+.card > .person-row + .person-row {
   border-top: 1px solid var(--line);
 }
 
