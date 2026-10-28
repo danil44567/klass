@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#1B6B52">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Класс">
+  <title>Класс — посещаемость</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="topbar" id="topbar"></header>
+
+    <main id="main">
+      <section id="view-home" class="view is-active"></section>
+      <section id="view-class" class="view"></section>
+      <section id="view-students" class="view"></section>
+      <section id="view-journal" class="view"></section>
+    </main>
+
+    <nav class="tabbar" id="tabbar" aria-label="Главное меню">
+      <button class="tab is-active" data-action="nav" data-view="home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-9.5Z"/></svg>
+        <span>Главная</span>
+      </button>
+      <button class="tab" data-action="nav" data-view="class">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v3H4V5Zm0 5.5h7v3H4v-3Zm9 0h7v3h-7v-3ZM4 16h7v3H4v-3Zm9 0h7v3h-7v-3Z"/></svg>
+        <span>Класс</span>
+      </button>
+      <button class="tab" data-action="nav" data-view="students">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm-7 8a7 7 0 0 1 14 0H5Z"/></svg>
+        <span>Ученики</span>
+      </button>
+      <button class="tab" data-action="nav" data-view="journal">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10a2 2 0 0 1 2 2v15l-7-3-7 3V5a2 2 0 0 1 2-2Zm3 5h4v2h-4V8Zm0 4h4v2h-4v-2Z"/></svg>
+        <span>Журнал</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="overlay" class="overlay hidden" hidden></div>
+
+  <div id="backdrop" class="backdrop hidden" hidden>
+    <div class="sheet" id="sheet" role="dialog" aria-modal="true">
+      <div class="sheet-handle"></div>
+      <div id="sheet-content"></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
