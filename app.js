@@ -18,13 +18,13 @@
     return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   }
 
-  function makeDesk(capacity = 2) {
-    return { id: uid("dk"), capacity: Number(capacity) === 1 ? 1 : 2 };
+  function makeDesk(capacity = 1) {
+    return { id: uid("dk"), capacity: Number(capacity) === 2 ? 2 : 1 };
   }
 
   function defaultLayout(rowCount, desksPerRow) {
     return Array.from({ length: rowCount }, () =>
-      Array.from({ length: desksPerRow }, () => makeDesk(2))
+      Array.from({ length: desksPerRow }, () => makeDesk(1))
     );
   }
 
@@ -65,7 +65,7 @@
           if (!desk || desk.empty) return null;
           return {
             id: desk.id || uid("dk"),
-            capacity: Number(desk.capacity) === 1 ? 1 : 2,
+            capacity: Number(desk.capacity) === 2 ? 2 : 1,
           };
         });
       });
@@ -1192,7 +1192,7 @@
         const cols = columnCount();
         const next = cols + delta;
         if (next < 1 || next > 8) return;
-        if (delta > 0) layout.forEach((row) => row.push(makeDesk(2)));
+        if (delta > 0) layout.forEach((row) => row.push(makeDesk(1)));
         else layout.forEach((row) => row.pop());
       } else {
         const next = layout.length + delta;
@@ -1216,7 +1216,7 @@
       const row = Number(hit.dataset.row);
       const col = Number(hit.dataset.col);
       if (!klass().layout[row] || klass().layout[row][col]) return;
-      klass().layout[row][col] = makeDesk(2);
+      klass().layout[row][col] = makeDesk(1);
       save();
       render();
       return;
@@ -1228,7 +1228,7 @@
     if (action === "set-capacity") {
       const found = findDesk(hit.dataset.desk);
       if (!found) return;
-      found.desk.capacity = Number(hit.dataset.capacity) === 1 ? 1 : 2;
+      found.desk.capacity = Number(hit.dataset.capacity) === 2 ? 2 : 1;
       pruneSeats();
       save();
       closeSheet();
