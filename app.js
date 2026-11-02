@@ -11,6 +11,7 @@
     attendanceId: null,
     pendingSeat: null,
     editingClassId: null,
+    deferredInstall: null,
   };
 
   function uid(prefix) {
@@ -536,6 +537,41 @@
           <button class="primary" type="button" data-action="import-data">Импорт</button>
         </div>
       </div>
+      ${renderInstallCard()}
+    `;
+  }
+
+  function isStandalone() {
+    return window.matchMedia("(display-mode: standalone)").matches
+      || window.navigator.standalone === true;
+  }
+
+  function renderInstallCard() {
+    if (isStandalone()) {
+      return `
+        <div class="section-title"><span>Приложение</span></div>
+        <div class="card">
+          <p class="backup-note">Открыто как установленное приложение.</p>
+        </div>
+      `;
+    }
+    if (ui.deferredInstall) {
+      return `
+        <div class="section-title"><span>Приложение</span></div>
+        <div class="card">
+          <p class="backup-note">Можно поставить «Класс» на телефон и открывать без браузера.</p>
+          <button class="primary" type="button" data-action="install-pwa" style="margin-top:12px">Установить</button>
+        </div>
+      `;
+    }
+    const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    return `
+      <div class="section-title"><span>Приложение</span></div>
+      <div class="card">
+        <p class="backup-note">${isIos
+          ? "На iPhone: «Поделиться» → «На экран „Домой“»."
+          : "В Chrome: меню ⋮ → «Установить приложение» или «На экран „Домой“»."}</p>
+      </div>
     `;
   }
 
@@ -1052,6 +1088,15 @@
       exportData();
       return;
     }
+    if (action === "install-pwa") {
+      if (!ui.deferredInstall) return toast("Установка сейчас недоступна");
+      ui.deferredInstall.prompt();
+      ui.deferredInstall.userChoice.finally(() => {
+        ui.deferredInstall = null;
+        render();
+      });
+      return;
+    }
     if (action === "import-data") {
       if (hit.dataset.confirm !== "1") {
         confirmSheet({
@@ -1377,7 +1422,24 @@
     });
   }
 
+  function registerPwa() {
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      ui.deferredInstall = event;
+      if (ui.view === "home" && !ui.attendanceId) render();
+    });
+    window.addEventListener("appinstalled", () => {
+      ui.deferredInstall = null;
+      toast("Приложение установлено");
+      if (ui.view === "home" && !ui.attendanceId) render();
+    });
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("./sw.js").catch(() => {});
+    }
+  }
+
   load();
   bind();
+  registerPwa();
   navigate("home");
 })();
