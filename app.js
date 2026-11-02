@@ -542,14 +542,45 @@
     );
   }
 
+  function columnTrackSizes(layout) {
+    const cols = padLayout(layout);
+    const widths = Array.from({ length: cols }, () => 64);
+    for (const row of layout) {
+      for (let col = 0; col < cols; col += 1) {
+        const desk = row[col];
+        if (desk && desk.capacity !== 1) widths[col] = 96;
+      }
+    }
+    return widths;
+  }
+
+  function captureClassroomScroll() {
+    const wrap = document.querySelector(".classroom-wrap");
+    const panel = document.querySelector(".overlay-panel");
+    return {
+      left: wrap ? wrap.scrollLeft : 0,
+      top: panel ? panel.scrollTop : window.scrollY || 0,
+    };
+  }
+
+  function restoreClassroomScroll(scroll) {
+    if (!scroll) return;
+    const wrap = document.querySelector(".classroom-wrap");
+    if (wrap) wrap.scrollLeft = scroll.left;
+    const panel = document.querySelector(".overlay-panel");
+    if (panel) panel.scrollTop = scroll.top;
+    else if (!ui.attendanceId) window.scrollTo(0, scroll.top);
+  }
+
   function renderClassroom({ mode, session }) {
     const source = mode === "attend" ? sessionLayout(session) : klass().layout;
     const layout = source.map((row) => row.slice());
-    const cols = padLayout(layout);
+    const tracks = columnTrackSizes(layout);
+    const template = `16px ${tracks.map((w) => `${w}px`).join(" ")}`;
     const rowsHtml = layout.map((desks, row) => `
-      <div class="desk-row" style="--cols:${cols}">
+      <div class="desk-row" style="grid-template-columns:${template}">
         <div class="row-index">${row + 1}</div>
-        ${desks.map((desk, deskIndex) => renderDeskSlot(desk, row, deskIndex, mode, session)).join("")}
+        ${desks.map((desk, deskIndex) => renderDeskSlot(desk, row, deskIndex, mode, session, tracks[deskIndex])).join("")}
       </div>
     `).join("");
     return `
@@ -562,11 +593,12 @@
     `;
   }
 
-  function renderDeskSlot(desk, row, deskIndex, mode, session) {
+  function renderDeskSlot(desk, row, deskIndex, mode, session, trackWidth) {
+    const slotStyle = `style="width:${trackWidth}px"`;
     if (!desk) {
       if (mode === "seat") {
         return `
-          <div class="desk-slot">
+          <div class="desk-slot" ${slotStyle}>
             <button class="ghost-desk" type="button" data-action="place-desk" data-row="${row}" data-col="${deskIndex}">
               <span>+</span>
               <small>парта</small>
@@ -574,9 +606,9 @@
           </div>
         `;
       }
-      return `<div class="desk-slot"><div class="ghost-desk is-static"></div></div>`;
+      return `<div class="desk-slot" ${slotStyle}><div class="ghost-desk is-static"></div></div>`;
     }
-    return `<div class="desk-slot">${renderDesk(desk, row, deskIndex, mode, session)}</div>`;
+    return `<div class="desk-slot" ${slotStyle}>${renderDesk(desk, row, deskIndex, mode, session)}</div>`;
   }
 
   function findSessionEntry(session, desk, row, deskIndex, side) {
@@ -709,6 +741,7 @@
       closeOverlay();
       return;
     }
+    const scroll = captureClassroomScroll();
     const stats = sessionStats(session);
     const unseated = session.entries.filter((e) => e.row == null);
     $("overlay").innerHTML = `
@@ -755,6 +788,7 @@
         </div>
       </div>
     `;
+    restoreClassroomScroll(scroll);
   }
 
   function pickSeatSheet(deskId, side) {
@@ -899,6 +933,7 @@
   }
 
   function render() {
+    const scroll = ui.view === "class" && !ui.attendanceId ? captureClassroomScroll() : null;
     pruneSeats();
     renderTopbar();
     if (ui.view === "home") renderHome();
@@ -906,6 +941,7 @@
     if (ui.view === "students") renderStudents();
     if (ui.view === "journal") renderJournal();
     if (ui.attendanceId) renderAttendance();
+    else if (scroll) restoreClassroomScroll(scroll);
   }
 
   function onClick(event) {

@@ -502,7 +502,7 @@ main {
   min-width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 7px;
   align-items: center;
   width: max-content;
   margin: 0 auto;
@@ -510,29 +510,28 @@ main {
 
 .board {
   width: 100%;
-  min-width: 220px;
+  min-width: 180px;
   background: linear-gradient(160deg, #2f5d4e, #1e4036);
   color: #e8f3ee;
-  border-radius: 14px;
-  padding: 10px 14px;
+  border-radius: 12px;
+  padding: 8px 12px;
   text-align: center;
   letter-spacing: 0.28em;
   text-transform: uppercase;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   box-shadow: inset 0 0 0 3px #16352c, 0 8px 16px rgba(15, 61, 48, 0.18);
 }
 
 .desk-row {
   display: grid;
-  grid-template-columns: 18px repeat(var(--cols, 3), 118px);
-  gap: 8px;
+  gap: 6px;
   justify-content: center;
   align-items: stretch;
 }
 
 .row-index {
-  width: 18px;
+  width: 16px;
   font-size: 10px;
   font-weight: 800;
   color: var(--muted);
@@ -542,53 +541,54 @@ main {
 }
 
 .desk-slot {
-  width: 118px;
+  min-width: 0;
 }
 
 .desk {
   background: linear-gradient(#e4c49a, #cda36d);
-  border-radius: 16px 16px 10px 10px;
-  padding: 20px 7px 9px;
-  box-shadow: 0 3px 0 #9a7548;
+  border-radius: 12px 12px 8px 8px;
+  padding: 16px 4px 6px;
+  box-shadow: 0 2px 0 #9a7548;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   width: 100%;
   min-width: 0;
-  min-height: 86px;
+  min-height: 62px;
   position: relative;
   box-sizing: border-box;
 }
 
 .desk.single {
   justify-content: center;
-}
-
-.desk.single .seat {
-  max-width: 64px;
+  width: 58px;
+  max-width: 100%;
+  margin-inline: auto;
+  padding-left: 5px;
+  padding-right: 5px;
 }
 
 .desk-setup {
   position: absolute;
-  top: 1px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
-  width: 32px;
-  height: 18px;
+  width: 28px;
+  height: 16px;
   display: grid;
   place-items: center;
   opacity: 0.55;
 }
 
 .desk-setup svg {
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   fill: #5c4030;
 }
 
 .ghost-desk {
   width: 100%;
-  min-height: 86px;
-  border-radius: 16px 16px 10px 10px;
+  min-height: 62px;
+  border-radius: 12px 12px 8px 8px;
   border: 1.5px dashed #c5cec9;
   background: rgba(255, 252, 247, 0.4);
   color: #8a9791;
@@ -596,35 +596,35 @@ main {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  font-size: 20px;
+  gap: 1px;
+  font-size: 16px;
   font-weight: 800;
 }
 
 .ghost-desk small {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .ghost-desk.is-static {
-  opacity: 0.4;
+  opacity: 0.35;
   pointer-events: none;
 }
 
 .seat {
   flex: 1;
-  min-width: 48px;
-  min-height: 58px;
-  border-radius: 12px;
+  min-width: 0;
+  min-height: 44px;
+  border-radius: 10px;
   background: #fffaf3;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  padding: 6px 4px;
+  gap: 1px;
+  padding: 4px 2px;
   border: 1.5px dashed rgba(26, 46, 40, 0.18);
   position: relative;
 }
@@ -636,15 +636,15 @@ main {
 }
 
 .seat .ini {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1;
 }
 
 .seat .sn {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 700;
-  max-width: 52px;
+  max-width: 40px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -652,7 +652,7 @@ main {
 }
 
 .seat.empty .plus {
-  font-size: 20px;
+  font-size: 16px;
   color: #b7c2bc;
   font-weight: 700;
   line-height: 1;
@@ -660,28 +660,28 @@ main {
 
 .seat.present {
   background: #e6f6ee;
-  border: 2px solid var(--present);
+  border: 1.5px solid var(--present);
 }
 
 .seat.absent {
   background: #fdeaea;
-  border: 2px solid var(--absent);
+  border: 1.5px solid var(--absent);
 }
 
 .seat.unmarked.filled {
   background: #fff;
-  border: 2px dashed #c5cec9;
+  border: 1.5px dashed #c5cec9;
 }
 
 .badge {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
+  top: -5px;
+  right: -5px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   color: white;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 800;
   display: grid;
   place-items: center;
