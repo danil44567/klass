@@ -112,21 +112,29 @@
     };
   }
 
+  function applyParsedState(parsed) {
+    const payload = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
+    if (payload && Array.isArray(payload.classes) && payload.classes.length) {
+      const classes = payload.classes.map((item) => normalizeClass(item));
+      const currentClassId = classes.some((item) => item.id === payload.currentClassId)
+        ? payload.currentClassId
+        : classes[0].id;
+      state = { classes, currentClassId };
+      return;
+    }
+    if (payload && (payload.students || payload.className || payload.layout || payload.rows)) {
+      const migrated = normalizeClass(payload, payload.className);
+      state = { currentClassId: migrated.id, classes: [migrated] };
+      return;
+    }
+    throw new Error("Неизвестный формат файла");
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.classes) && parsed.classes.length) {
-        const classes = parsed.classes.map((item) => normalizeClass(item));
-        const currentClassId = classes.some((item) => item.id === parsed.currentClassId)
-          ? parsed.currentClassId
-          : classes[0].id;
-        state = { classes, currentClassId };
-        return;
-      }
-      const migrated = normalizeClass(parsed, parsed.className);
-      state = { currentClassId: migrated.id, classes: [migrated] };
+      applyParsedState(JSON.parse(raw));
     } catch {
       state = defaultState();
     }
@@ -134,6 +142,70 @@
 
   function save() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function exportFileName() {
+    return `klass-backup-${todayIso()}.json`;
+  }
+
+  function buildExportPayload() {
+    return {
+      app: "klass-attendance",
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      data: {
+        currentClassId: state.currentClassId,
+        classes: state.classes,
+      },
+    };
+  }
+
+  function exportData() {
+    const blob = new Blob([JSON.stringify(buildExportPayload(), null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = exportFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast("Файл сохранён");
+  }
+
+  function importDataFromFile(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ""));
+        applyParsedState(parsed);
+        if (ui.attendanceId) closeOverlay();
+        ui.query = "";
+        ui.pendingSeat = null;
+        ui.editingClassId = null;
+        save();
+        closeSheet();
+        render();
+        toast("Данные загружены");
+      } catch {
+        toast("Не удалось прочитать JSON");
+      }
+    };
+    reader.onerror = () => toast("Ошибка чтения файла");
+    reader.readAsText(file, "utf-8");
+  }
+
+  function openBackupSheet() {
+    openSheet(`
+      <h2>Резервная копия</h2>
+      <p class="lead">Экспорт сохранит все классы, учеников, рассадку и журнал в JSON. Импорт полностью заменит текущие данные.</p>
+      <button class="primary" type="button" data-action="export-data">Скачать JSON</button>
+      <button class="ghost" type="button" data-action="import-data" style="margin-top:8px">Импортировать JSON</button>
+      <input id="import-file" type="file" accept="application/json,.json" hidden>
+    `);
   }
 
   function klass() {
@@ -455,6 +527,14 @@
       </div>
       <div class="card">
         ${last.length ? last.map(sessionRow).join("") : emptyBlock("Пока нет отметок", "Нажмите «Отметить посещаемость», когда будете готовы.")}
+      </div>
+      <div class="section-title"><span>Данные</span></div>
+      <div class="card">
+        <p class="backup-note">Скачайте все классы в JSON или восстановите из файла. Импорт заменит текущие данные.</p>
+        <div class="row-actions">
+          <button class="ghost" type="button" data-action="export-data">Экспорт</button>
+          <button class="primary" type="button" data-action="import-data">Импорт</button>
+        </div>
       </div>
     `;
   }
@@ -962,6 +1042,42 @@
     }
     if (action === "open-classes") {
       openClassesSheet();
+      return;
+    }
+    if (action === "open-backup") {
+      openBackupSheet();
+      return;
+    }
+    if (action === "export-data") {
+      exportData();
+      return;
+    }
+    if (action === "import-data") {
+      if (hit.dataset.confirm !== "1") {
+        confirmSheet({
+          title: "Заменить все данные?",
+          text: "Текущие классы, ученики и журнал будут заменены содержимым файла. Сделайте экспорт, если хотите сохранить копию.",
+          action: "import-data",
+          label: "Выбрать файл",
+        });
+        return;
+      }
+      closeSheet();
+      let input = document.getElementById("import-file-global");
+      if (!input) {
+        input = document.createElement("input");
+        input.id = "import-file-global";
+        input.type = "file";
+        input.accept = "application/json,.json";
+        input.hidden = true;
+        input.addEventListener("change", () => {
+          const file = input.files && input.files[0];
+          input.value = "";
+          importDataFromFile(file);
+        });
+        document.body.appendChild(input);
+      }
+      input.click();
       return;
     }
     if (action === "add-class") {

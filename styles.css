@@ -426,6 +426,14 @@ main {
   margin-top: 12px;
 }
 
+.backup-note {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  margin: 2px 2px 0;
+}
+
 .fab {
   position: fixed;
   right: calc(50% - min(215px, 50vw) + 16px);
