@@ -450,6 +450,60 @@
     return { present, absent, unmarked, total: session.entries.length };
   }
 
+  function sortEntriesByName(entries) {
+    return [...entries].sort((a, b) => a.name.localeCompare(b.name, "ru", { sensitivity: "base" }));
+  }
+
+  function formatNumberedList(lines) {
+    return lines.map((line, index) => `${index + 1}. ${line}`).join("\n");
+  }
+
+  function buildAttendanceCopyText(session, mode) {
+    const sorted = sortEntriesByName(session.entries);
+    if (mode === "present") {
+      return formatNumberedList(
+        sorted.filter((e) => e.status === "present").map((e) => e.name)
+      );
+    }
+    if (mode === "absent") {
+      return formatNumberedList(
+        sorted.filter((e) => e.status === "absent").map((e) => e.name)
+      );
+    }
+    return formatNumberedList(sorted.map((e) => {
+      const mark = e.status === "present" ? "есть" : e.status === "absent" ? "нет" : "не отмечен";
+      return `${e.name} — ${mark}`;
+    }));
+  }
+
+  async function copyAttendanceList(mode) {
+    const session = sessionById(ui.attendanceId);
+    if (!session) return;
+    const text = buildAttendanceCopyText(session, mode);
+    if (!text) {
+      toast(mode === "present" ? "Нет присутствующих" : mode === "absent" ? "Нет отсутствующих" : "Список пуст");
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = text;
+        area.setAttribute("readonly", "");
+        area.style.position = "fixed";
+        area.style.left = "-9999px";
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        area.remove();
+      }
+      toast("Скопировано");
+    } catch {
+      toast("Не удалось скопировать");
+    }
+  }
+
   function cycleStatus(status) {
     if (status === "unmarked") return "present";
     if (status === "present") return "absent";
@@ -877,6 +931,11 @@
         <div class="tiny-actions">
           <button class="ok" type="button" data-action="mark-all" data-status="present">Все здесь</button>
           <button class="no" type="button" data-action="mark-all" data-status="absent">Все отсутствуют</button>
+        </div>
+        <div class="copy-actions">
+          <button type="button" data-action="copy-list" data-mode="present">Копировать кто здесь</button>
+          <button type="button" data-action="copy-list" data-mode="absent">Копировать кого нет</button>
+          <button type="button" data-action="copy-list" data-mode="all">Копировать всех с отметкой</button>
         </div>
         <div class="legend">
           <span><i style="background:#c5cec9"></i>не отмечен</span>
@@ -1356,6 +1415,10 @@
       session.entries.forEach((e) => { e.status = hit.dataset.status; });
       save();
       renderAttendance();
+      return;
+    }
+    if (action === "copy-list") {
+      copyAttendanceList(hit.dataset.mode);
       return;
     }
     if (action === "delete-session") {

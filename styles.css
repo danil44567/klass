@@ -979,7 +979,23 @@ main {
 .tiny-actions {
   display: flex;
   gap: 8px;
-  margin: 10px 0 14px;
+  margin: 10px 0 10px;
+}
+
+.copy-actions {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.copy-actions button {
+  min-height: 42px;
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--green-dark);
 }
 
 .tiny-actions button {
